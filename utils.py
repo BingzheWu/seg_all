@@ -1,14 +1,15 @@
 import os
 from math import ceil
-
+import PIL
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Variable
 from skimage.morphology import label
-
-
+import scipy.misc
+import scipy.ndimage as ndimage
+import pandas as pd
 def check_mkdir(dir_name):
     if not os.path.exists(dir_name):
         os.mkdir(dir_name)
@@ -265,7 +266,45 @@ def rle_encoding(x):
         if (b>prev+1): run_lengths.extend((b + 1, 0))
         run_lengths[-1] += 1
         prev = b
-    return run_lengths
+    return " ".join([str(i) for i in run_lengths])
+def analyze_image(net, im_path, im_id):
+    '''
+    Take an image_path (pathlib.Path object), preprocess and label it, extract the RLE strings 
+    and dump it into a Pandas DataFrame.
+    '''
+    # Read in data and convert to grayscale
+    #im_id = im_path.parts[-3]
+    ori_img = PIL.Image.open(im_path).convert('RGB')
+    ori_img = np.array(ori_img)
+    h, w, c = ori_img.shape
+    img = scipy.misc.imresize(ori_img, (256,256))
+    img = np.transpose(img, ( 2, 0, 1))
+    img = np.expand_dims(img, 0)
+    img = Variable(torch.Tensor(img))
+    img.float().div(255)
+    prediction = net(img)
+    prediction.squeeze_()
+    prediction0, prediction1 = torch.split(prediction, 1)
+    prediction = torch.le(prediction0, prediction1)
+    prediction.squeeze_()
+    prediction = prediction.data.numpy().astype(np.uint8)
+    prediction = scipy.misc.imresize(prediction, (h, w))
+    mask = prediction
+    # Mask out background and extract connected objects
+    if np.sum(mask==0) < np.sum(mask==1):
+        mask = np.where(mask, 0, 1)    
+        labels, nlabels = ndimage.label(mask)
+    labels, nlabels = ndimage.label(mask)
+    
+    # Loop through labels and add each to a DataFrame
+    im_df = pd.DataFrame()
+    for label_num in range(1, nlabels+1):
+        label_mask = np.where(labels == label_num, 1, 0)
+        if label_mask.flatten().sum() > 10:
+            rle = rle_encoding(label_mask)
+            s = pd.Series({'ImageId': im_id, 'EncodedPixels': rle})
+            im_df = im_df.append(s, ignore_index=True)
+    return im_df    
 def prob_to_rles(x, cutoff=0.5):
     lab_img = label(x > cutoff)
     for i in range(1, lab_img.max() + 1):

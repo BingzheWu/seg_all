@@ -4,7 +4,7 @@ from torch.autograd import Variable
 import models.model_factory
 import dataset.dataset_factory
 from torch.utils.data import DataLoader
-from utils import CrossEntropyLoss2d, AverageMeter, evaluate, get_file_path, rle_encoding, prob_to_rles
+from utils import CrossEntropyLoss2d, AverageMeter, evaluate, get_file_path, rle_encoding, prob_to_rles, analyze_image
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
 import torch.optim as optim
@@ -18,13 +18,15 @@ def main():
     optimizer = optim.SGD(net.parameters(), opt.lr, momentum = 0.9)
     curr_epoch = 0
     #scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args['lr_patience'], min_lr=1e-10)
-    for epoch in range(curr_epoch, 100):
+    for epoch in range(curr_epoch, 400):
         train(train_loader, net, criterion, optimizer, epoch)
         make_submit(opt.test_dir, net, opt.submit_file)
 
     
 
 def train(train_loader, net, criterion, optimizer, epoch, ):
+    net.train()
+    net.cuda()
     curr_iter = (epoch-1)*len(train_loader)
     train_loss = AverageMeter()
     for i, data in enumerate(train_loader):
@@ -45,7 +47,8 @@ def train(train_loader, net, criterion, optimizer, epoch, ):
     save_dir = os.path.join('experiments', opt.experiments)
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
-    torch.save(net.state_dict(), os.path.join(save_dir, str(epoch)+'.pth'))
+    if epoch%10 == 0:
+        torch.save(net.state_dict(), os.path.join(save_dir, str(epoch)+'.pth'))
 def validate(val_loader, net, criterion, optimizer, epoch, ):
     net.eval()
     val_loss = AverageMeter()
@@ -72,35 +75,24 @@ def make_submit(test_dir, net, save_results_dir):
     results = pd.DataFrame()
     test_ids = []
     rles = []
+    results = pd.DataFrame()
     for test_id in os.listdir(test_dir):
         img_path = os.path.join(test_dir, test_id, 'images')
         img_file_path = get_file_path(img_path)
-        ori_img = PIL.Image.open(img_file_path).convert('RGB')
-        ori_img = np.array(ori_img)
-        h, w, c = ori_img.shape
-        img = scipy.misc.imresize(ori_img, (256,256))
-        img = np.transpose(img, ( 2, 0, 1))
-        img = np.expand_dims(img, 0)
-        img = Variable(torch.Tensor(img))
-        prediction = net(img)
-        prediction.squeeze_()
-        prediction0, prediction1 = torch.split(prediction, 1)
-        prediction = torch.le(prediction0, prediction1)
-        prediction.squeeze_()
-        prediction = prediction.data.numpy().astype(np.uint8)
-        prediction = scipy.misc.imresize(prediction, (h, w))
         #run_length = rle_encoding(prediction)
-        rle = list(prob_to_rles(prediction))
-        test_ids.extend([test_id]*len(rle))
-        rles.extend(rle)
-    results['ImageId'] = test_ids
-    results['EncodedPixels'] = pd.Series(rles).apply(lambda x : ' '.join(str(y) for y in x))
+        im_df = analyze_image(net, img_file_path, test_id)
+        results = results.append(im_df, ignore_index = True)
+        #rle = list(prob_to_rles(prediction))
+        #test_ids.extend([test_id]*len(rle))
+        #rles.extend(rle)
+    #results['ImageId'] = test_ids
+    #results['EncodedPixels'] = pd.Series(rles).apply(lambda x : ' '.join(str(y) for y in x))
     results.to_csv(save_results_dir, index = False)
 def test_submit():
     net = models.model_factory.factory(opt.arch)
-    model_dir = os.path.join('experiments', opt.experiments, '98.pth')
+    model_dir = os.path.join('experiments', opt.experiments, '960.pth')
     net.load_state_dict(torch.load(model_dir))
     make_submit(opt.test_dir, net, opt.submit_file)
 if __name__ == '__main__':
-    #main()
-    test_submit()
+    main()
+    #test_submit()

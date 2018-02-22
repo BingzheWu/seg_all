@@ -12,7 +12,7 @@ def factory(dataset_name):
         ])
         input_transform = standard_transforms.Compose([
             standard_transforms.ToTensor(),
-            standard_transforms.Normalize(*mean_std)
+            #standard_transforms.Normalize(*mean_std)
         ])
         target_transform = extend_transforms.MaskToTensor()
         dataset = nucleus_stage1(joint_transform = train_joint_transform,
